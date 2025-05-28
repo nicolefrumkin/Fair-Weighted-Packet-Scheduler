@@ -19,8 +19,8 @@ typedef struct Packet
     char Dadd[MAX_SADD_LENGTH];
     int Dport;
     int length_packet;
-    int weight;
-    int virtual_finish_time;
+    double weight;
+    double virtual_finish_time;
 } Packet;
 
 typedef struct Connection
@@ -29,9 +29,10 @@ typedef struct Connection
     int Sport;
     char Dadd[MAX_SADD_LENGTH];
     int Dport;
-    int weight;
-    int last_finish_time;
+    double weight;
+    double last_finish_time;
     int first_appear_idx;
+    int flagweight;
     bool is_active;
 } Connection;
 
@@ -40,13 +41,10 @@ Connection connections[MAX_CONNECTIONS];
 int packet_count = 0;
 int connection_count = 0;
 
-int maxi(int a, int b)
-{
-    return a > b ? a : b;
-}
-
 int find_or_create_connection(Packet *packet)
 {
+    // printf("Im here3\n");
+    // fflush(stdout);
     for (int i = 0; i < connection_count; i++)
     {
         if (connections[i].is_active &&
@@ -55,6 +53,14 @@ int find_or_create_connection(Packet *packet)
             connections[i].Sport == packet->Sport &&
             connections[i].Dport == packet->Dport)
         { // Connection exists
+            if (packet->weight == 1.0)
+            {
+                connections[i].flagweight = 0; // flagweight is 0 for packets with weight 1
+            }
+            else
+            {
+                connections[i].flagweight = 1; // flagweight is 1 for packets with explicit weight
+            }
             return i;
         }
     }
@@ -69,10 +75,18 @@ int find_or_create_connection(Packet *packet)
     connections[idx].last_finish_time = 0.0;
     connections[idx].first_appear_idx = idx;
     connections[idx].is_active = true;
+    if (packet->weight == 1.0)
+    {
+        connections[idx].flagweight = 0; // flagweight is 0 for packets with weight 1
+    }
+    else
+    {
+        connections[idx].flagweight = 1; // flagweight is 1 for packets with explicit weight
+    }
     return idx;
 }
 
-void process_packet(Packet *packet)
+int process_packet(Packet *packet)
 {
     int conn_id = find_or_create_connection(packet);
     Connection *conn = &connections[conn_id];
@@ -82,16 +96,20 @@ void process_packet(Packet *packet)
     else
         conn->weight = packet->weight; // update with explicit value
 
-    double start = maxi(conn->last_finish_time, packet->time);
-    packet->virtual_finish_time = start + packet->length_packet / packet->weight;
+    double start = conn->last_finish_time > (double)packet->time ? conn->last_finish_time : (double)packet->time;
+    packet->virtual_finish_time = start + (double)packet->length_packet / conn->weight;
     conn->last_finish_time = packet->virtual_finish_time;
     packet->connection_id = conn_id;
+
+    return connections[conn_id].flagweight;
 }
 
 int compare_packets(const void *a, const void *b)
 {
+
     Packet *packet_a = (Packet *)a;
     Packet *packet_b = (Packet *)b;
+    fflush(stdout);
 
     if (packet_a->virtual_finish_time < packet_b->virtual_finish_time)
         return -1;
@@ -104,27 +122,37 @@ int compare_packets(const void *a, const void *b)
 
 int main()
 {
+    // printf("Im here1\n");
+    // fflush(stdout);
     char line[MAX_LINE_LENGTH];
     while (fgets(line, sizeof(line), stdin))
     {
-        Packet *packet = &packets[packet_count++];
-        int parsed_elementes = sscanf(line, " %d %s %d %s %d %d %d",
-                                      &packet->time, packet->Sadd, &packet->Sport,
-                                      packet->Dadd, &packet->Dport, &packet->length_packet, &packet->weight);
-        if (parsed_elementes == 6)
-            packet->weight = 1;
-        process_packet(packet);
+        Packet *packet = &packets[packet_count];
+        int parsed_elements = sscanf(line, " %d %s %d %s %d %d %lf",
+                                     &packet->time, packet->Sadd, &packet->Sport,
+                                     packet->Dadd, &packet->Dport, &packet->length_packet, &packet->weight);
+        if (parsed_elements == 6)
+            packet->weight = 1.0;
         packet->id = packet_count;
-    }
-    qsort(packets, packet_count, sizeof(Packet), compare_packets);
+        int flagWeight = process_packet(packet);
+        if (flagWeight == 0)
+        {
+            printf("%d: %d %s %d %s %d %d\n",
+                   (int)packet->virtual_finish_time,
+                   packet->time, packet->Sadd, packet->Sport,
+                   packet->Dadd, packet->Dport, packet->length_packet);
+            fflush(stdout);
+        }
+        else
+        {
+            printf("%d: %d %s %d %s %d %d %.2f\n",
+                   (int)packet->virtual_finish_time,
+                   packet->time, packet->Sadd, packet->Sport,
+                   packet->Dadd, packet->Dport, packet->length_packet, packet->weight);
 
-    for (int i = 0; i < packet_count; i++)
-    {
-        Packet *p = &packets[i];
-        printf("%d: %d %s %d %s %d %d\n",
-               (int)p->virtual_finish_time,
-               p->time, p->Sadd, p->Sport, p->Dadd, p->Dport, p->length_packet);
+            fflush(stdout);
+        }
+        packet_count++;
     }
-
     return 0;
 }
