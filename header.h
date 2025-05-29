@@ -54,6 +54,7 @@ int calculateFinishTime(Packet *packet, Connection *connections);
 void printPacketToFile(Packet *packet);
 void savePacketParameters(char *line, Packet *packet);
 void drainReadyPackets(int currentTime, Connection *connections, int connectionCount);
+void compareOutputWithExpected(const char *expectedFilePath);
 
 // Queue functions
 void initQueue(Queue *q);

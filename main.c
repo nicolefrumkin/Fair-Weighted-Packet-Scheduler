@@ -2,8 +2,6 @@
 
 int main()
 {
-    printf("hi\n");
-    fflush(stdout);
     Packet *packets = malloc(sizeof(Packet) * MAX_PACKETS);
     Connection *connections = malloc(sizeof(Connection) * MAX_CONNECTIONS);
     char line[MAX_LINE_LENGTH] = {0};
@@ -24,10 +22,63 @@ int main()
     }
     // Drain ALL remaining packets at the end
     drainReadyPackets(INT_MAX, connections, connectionCount);
+    compareOutputWithExpected("out8.txt");
     free(packets);
     free(connections);
     return 0;
 }
+
+void compareOutputWithExpected(const char *expectedFilePath)
+{
+    FILE *expectedFile = fopen(expectedFilePath, "r");
+    FILE *actualFile = fopen("actual_output.txt", "r");
+    FILE *mismatchesFile = fopen("mismatches.txt", "w");
+
+    if (!expectedFile || !actualFile || !mismatchesFile)
+    {
+        fprintf(stderr, "Error opening files for comparison.\n");
+        return;
+    }
+
+    char expectedLine[MAX_LINE_LENGTH];
+    char actualLine[MAX_LINE_LENGTH];
+    int lineNumber = 1;
+    bool match = true;
+
+    while (fgets(expectedLine, sizeof(expectedLine), expectedFile) &&
+           fgets(actualLine, sizeof(actualLine), actualFile))
+    {
+        // Remove trailing newline characters
+        expectedLine[strcspn(expectedLine, "\r\n")] = 0;
+        actualLine[strcspn(actualLine, "\r\n")] = 0;
+
+        if (strcmp(expectedLine, actualLine) != 0)
+        {
+            fprintf(mismatchesFile,"Mismatch at line %d:\nExpected: %s\nActual  : %s\n\n",
+                   lineNumber, expectedLine, actualLine);
+            match = false;
+        }
+        lineNumber++;
+    }
+
+    // Check if one file has extra lines
+    if (fgets(expectedLine, sizeof(expectedLine), expectedFile) ||
+        fgets(actualLine, sizeof(actualLine), actualFile))
+    {
+        fprintf(mismatchesFile,"File lengths differ after line %d.\n", lineNumber - 1);
+        match = false;
+    }
+
+    if (match)
+    {
+        fprintf(mismatchesFile,"Output matches expected file.\n");
+    }
+
+    fclose(expectedFile);
+    fclose(actualFile);
+    fclose(mismatchesFile);
+}
+
 
 void drainReadyPackets(int currentTime, Connection *connections, int connectionCount)
 {
