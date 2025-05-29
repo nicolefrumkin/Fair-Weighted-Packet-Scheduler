@@ -1,6 +1,11 @@
-#include <stdio.h>
-#include <stdbool.h>
 #include "header.h"
+
+typedef struct {
+    Packet *items[MAX_QUEUE_SIZE];
+    int front;
+    int rear;
+    int size;
+} Queue;
 
 // Initialize queue
 void initQueue(Queue *q) {
@@ -19,33 +24,30 @@ bool isFull(Queue *q) {
     return q->size == MAX_QUEUE_SIZE;
 }
 
-// Enqueue an element
-bool enqueue(Queue *q, int value) {
-    if (isFull(q))
-        return false;
+// Enqueue a Packet*
+bool enqueue(Queue *q, Packet *packet) {
+    if (isFull(q)) return false;
 
     q->rear = (q->rear + 1) % MAX_QUEUE_SIZE;
-    q->items[q->rear] = value;
+    q->items[q->rear] = packet;
     q->size++;
     return true;
 }
 
-// Dequeue an element
-bool dequeue(Queue *q, int *removedItem) {
-    if (isEmpty(q))
-        return false;
+// Dequeue a Packet*
+bool dequeue(Queue *q, Packet **packet) {
+    if (isEmpty(q)) return false;
 
-    *removedItem = q->items[q->front];
+    *packet = q->items[q->front];
     q->front = (q->front + 1) % MAX_QUEUE_SIZE;
     q->size--;
     return true;
 }
 
-// Peek at the front element
-bool peek(Queue *q, int *frontItem) {
-    if (isEmpty(q))
-        return false;
+// Peek at the front Packet*
+bool peek(Queue *q, Packet **packet) {
+    if (isEmpty(q)) return false;
 
-    *frontItem = q->items[q->front];
+    *packet = q->items[q->front];
     return true;
 }

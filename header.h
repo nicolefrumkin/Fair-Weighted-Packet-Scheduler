@@ -11,13 +11,6 @@
 #define MAX_CONNECTIONS 10000
 #define MAX_QUEUE_SIZE 1000
 
-typedef struct {
-    Packet *items[MAX_QUEUE_SIZE];
-    int front;
-    int rear;
-    int size;
-} Queue;
-
 typedef struct Packet
 {
     int time;
@@ -48,9 +41,10 @@ int calculateFinishTime(Packet *packet, Connection *connections, int *connection
 int comparePackets(Packet *packet1, Packet *packet2, Connection *connections);
 void printPacketToFile(Packet packet, Connection *connections, int *connectionCount);
 void savePacketParameters(char *line, int *firstLine, int *packetCount, Packet *packets);
-void sortConnectionOrder(Connection *connections);
+void drainReadyPackets(int currentTime, Connection *connections, int connectionCount);
 void initQueue(Queue *q);
-int enqueue(Queue *q, Packet *pkt);
-int dequeue(Queue *q, Packet **pkt);
-int isQueueEmpty(Queue *q);
-int isQueueFull(Queue *q);
+bool isEmpty(Queue *q);
+bool isFull(Queue *q);
+bool enqueue(Queue *q, Packet *packet);
+bool dequeue(Queue *q, Packet **packet);
+bool peek(Queue *q, Packet **packet);
