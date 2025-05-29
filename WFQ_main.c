@@ -120,39 +120,55 @@ int compare_packets(const void *a, const void *b)
     return conn1 - conn2;
 }
 
+void printPacketToFile(Packet *packet)
+{
+    int flagWeight = process_packet(packet);
+    if (flagWeight == 0)
+    {
+        printf("%d: %d %s %d %s %d %d\n",
+               (int)packet->time,
+               packet->time, packet->Sadd, packet->Sport,
+               packet->Dadd, packet->Dport, packet->length_packet);
+        fflush(stdout);
+    }
+    else
+    {
+        printf("%d: %d %s %d %s %d %d %.2f\n",
+               (int)packet->time,
+               packet->time, packet->Sadd, packet->Sport,
+               packet->Dadd, packet->Dport, packet->length_packet, packet->weight);
+
+        fflush(stdout);
+    }
+}
+
+void savePacketParameters(char *line, int *firstLine)
+{
+    Packet *packet = &packets[packet_count];
+    int parsed_elements = sscanf(line, " %d %s %d %s %d %d %lf",
+                                 &packet->time, packet->Sadd, &packet->Sport,
+                                 packet->Dadd, &packet->Dport, &packet->length_packet, &packet->weight);
+
+    if (firstLine)
+    {
+        packet->time = 0;
+        firstLine = 0;
+    }
+    if (parsed_elements == 6)
+        packet->weight = 1.0;
+    packet->id = packet_count;
+    packet_count++;
+}
+
 int main()
 {
+    int firstLine = 1;
     // printf("Im here1\n");
     // fflush(stdout);
     char line[MAX_LINE_LENGTH];
     while (fgets(line, sizeof(line), stdin))
     {
-        Packet *packet = &packets[packet_count];
-        int parsed_elements = sscanf(line, " %d %s %d %s %d %d %lf",
-                                     &packet->time, packet->Sadd, &packet->Sport,
-                                     packet->Dadd, &packet->Dport, &packet->length_packet, &packet->weight);
-        if (parsed_elements == 6)
-            packet->weight = 1.0;
-        packet->id = packet_count;
-        int flagWeight = process_packet(packet);
-        if (flagWeight == 0)
-        {
-            printf("%d: %d %s %d %s %d %d\n",
-                   (int)packet->virtual_finish_time,
-                   packet->time, packet->Sadd, packet->Sport,
-                   packet->Dadd, packet->Dport, packet->length_packet);
-            fflush(stdout);
-        }
-        else
-        {
-            printf("%d: %d %s %d %s %d %d %.2f\n",
-                   (int)packet->virtual_finish_time,
-                   packet->time, packet->Sadd, packet->Sport,
-                   packet->Dadd, packet->Dport, packet->length_packet, packet->weight);
-
-            fflush(stdout);
-        }
-        packet_count++;
+        savePacketParameters(line,firstLine);
     }
     return 0;
 }
