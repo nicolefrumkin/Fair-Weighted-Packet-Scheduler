@@ -12,15 +12,15 @@
 typedef struct Packet
 {
     int id;
-    int connection_id;
+    int connectionID;
     int time;
     char Sadd[MAX_SADD_LENGTH];
     int Sport;
     char Dadd[MAX_SADD_LENGTH];
     int Dport;
-    int length_packet;
+    int packetLength;
     double weight;
-    double virtual_finish_time;
+    double virtualFinishTime;
 } Packet;
 
 typedef struct Connection
@@ -30,24 +30,19 @@ typedef struct Connection
     char Dadd[MAX_SADD_LENGTH];
     int Dport;
     double weight;
-    double last_finish_time;
-    int first_appear_idx;
+    double lastFinishTime;
+    int firstAppearIdx;
     int flagweight;
-    bool is_active;
+    bool isActive;
 } Connection;
 
-Packet packets[MAX_PACKETS];
-Connection connections[MAX_CONNECTIONS];
-int packet_count = 0;
-int connection_count = 0;
-
-int find_or_create_connection(Packet *packet)
+int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *connections)
 {
     // printf("Im here3\n");
     // fflush(stdout);
-    for (int i = 0; i < connection_count; i++)
+    for (int i = 0; i < connectionCount; i++)
     {
-        if (connections[i].is_active &&
+        if (connections[i].isActive &&
             strcmp(connections[i].Sadd, packet->Sadd) == 0 &&
             strcmp(connections[i].Dadd, packet->Dadd) == 0 &&
             connections[i].Sport == packet->Sport &&
@@ -66,15 +61,15 @@ int find_or_create_connection(Packet *packet)
     }
 
     // New connection
-    int idx = connection_count++;
+    int idx = connectionCount++;
     strcpy(connections[idx].Sadd, packet->Sadd);
     strcpy(connections[idx].Dadd, packet->Dadd);
     connections[idx].Sport = packet->Sport;
     connections[idx].Dport = packet->Dport;
     connections[idx].weight = packet->weight;
-    connections[idx].last_finish_time = 0.0;
-    connections[idx].first_appear_idx = idx;
-    connections[idx].is_active = true;
+    connections[idx].lastFinishTime = 0.0;
+    connections[idx].firstAppearIdx = idx;
+    connections[idx].isActive = true;
     if (packet->weight == 1.0)
     {
         connections[idx].flagweight = 0; // flagweight is 0 for packets with weight 1
@@ -86,49 +81,44 @@ int find_or_create_connection(Packet *packet)
     return idx;
 }
 
-int process_packet(Packet *packet)
+int processPacket(Packet *packet, Connection *connections)
 {
-    int conn_id = find_or_create_connection(packet);
-    Connection *conn = &connections[conn_id];
+    int connID = findOrCreateConnection(packet);
+    Connection *conn = &connections[connID];
 
     if (packet->weight == 1 && conn->weight != 1)
         packet->weight = conn->weight;
     else
         conn->weight = packet->weight; // update with explicit value
 
-    double start = conn->last_finish_time > (double)packet->time ? conn->last_finish_time : (double)packet->time;
-    packet->virtual_finish_time = start + (double)packet->length_packet / conn->weight;
-    conn->last_finish_time = packet->virtual_finish_time;
-    packet->connection_id = conn_id;
+    double start = conn->lastFinishTime > (double)packet->time ? conn->lastFinishTime : (double)packet->time;
+    packet->virtualFinishTime = start + (double)packet->packetLength / conn->weight;
+    conn->lastFinishTime = packet->virtualFinishTime;
+    packet->connectionID = connID;
 
-    return connections[conn_id].flagweight;
+    return connections[connID].flagweight;
 }
 
-int compare_packets(const void *a, const void *b)
+int comparePackets(Packet *packet1, Packet *packet2, Connection *connections)
 {
-
-    Packet *packet_a = (Packet *)a;
-    Packet *packet_b = (Packet *)b;
-    fflush(stdout);
-
-    if (packet_a->virtual_finish_time < packet_b->virtual_finish_time)
+    if (packet1->virtualFinishTime < packet2->virtualFinishTime)
         return -1;
-    if (packet_a->virtual_finish_time > packet_b->virtual_finish_time)
+    if (packet1->virtualFinishTime > packet2->virtualFinishTime)
         return 1;
-    int conn1 = connections[packet_a->connection_id].first_appear_idx;
-    int conn2 = connections[packet_b->connection_id].first_appear_idx;
+    int conn1 = connections[packet1->connectionID].firstAppearIdx;
+    int conn2 = connections[packet2->connectionID].firstAppearIdx;
     return conn1 - conn2;
 }
 
 void printPacketToFile(Packet *packet)
 {
-    int flagWeight = process_packet(packet);
+    int flagWeight = processPacket(packet);
     if (flagWeight == 0)
     {
         printf("%d: %d %s %d %s %d %d\n",
                (int)packet->time,
                packet->time, packet->Sadd, packet->Sport,
-               packet->Dadd, packet->Dport, packet->length_packet);
+               packet->Dadd, packet->Dport, packet->packetLength);
         fflush(stdout);
     }
     else
@@ -136,39 +126,46 @@ void printPacketToFile(Packet *packet)
         printf("%d: %d %s %d %s %d %d %.2f\n",
                (int)packet->time,
                packet->time, packet->Sadd, packet->Sport,
-               packet->Dadd, packet->Dport, packet->length_packet, packet->weight);
+               packet->Dadd, packet->Dport, packet->packetLength, packet->weight);
 
         fflush(stdout);
     }
 }
 
-void savePacketParameters(char *line, int *firstLine)
+void savePacketParameters(char *line, int *firstLine, int *packetCount, Packet *packets)
 {
-    Packet *packet = &packets[packet_count];
-    int parsed_elements = sscanf(line, " %d %s %d %s %d %d %lf",
+    Packet *packet = &packets[*packetCount];
+    int parsedElements = sscanf(line, " %d %s %d %s %d %d %lf",
                                  &packet->time, packet->Sadd, &packet->Sport,
-                                 packet->Dadd, &packet->Dport, &packet->length_packet, &packet->weight);
+                                 packet->Dadd, &packet->Dport, &packet->packetLength, &packet->weight);
 
-    if (firstLine)
+    if (*firstLine)
     {
         packet->time = 0;
-        firstLine = 0;
+        *firstLine = 0;
     }
-    if (parsed_elements == 6)
+
+    if (parsedElements == 6)
         packet->weight = 1.0;
-    packet->id = packet_count;
-    packet_count++;
+
+    packet->id = *packetCount;
+    (*packetCount)++;
 }
 
 int main()
 {
-    int firstLine = 1;
-    // printf("Im here1\n");
-    // fflush(stdout);
+    Packet packets[MAX_PACKETS];
+    Connection connections[MAX_CONNECTIONS];
     char line[MAX_LINE_LENGTH];
+    int packetCount = 0;
+    int connectionCount = 0;
+    int firstLine = 1;
+
+    // read packets from file
     while (fgets(line, sizeof(line), stdin))
     {
-        savePacketParameters(line,firstLine);
+        savePacketParameters(line, firstLine, &packetCount, packets);
+
     }
     return 0;
 }
