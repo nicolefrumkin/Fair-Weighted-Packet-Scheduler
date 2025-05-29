@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <math.h>
+#include <float.h>
 
 #define MAX_LINE_LENGTH 1024
 #define MAX_SADD_LENGTH 20
@@ -14,8 +15,11 @@
 #define MAX_CONNECTIONS 10000
 #define MAX_QUEUE_SIZE 1000
 
+static double globalOutputFinishTime = 0.0;
+
 // Define Packet FIRST
-typedef struct Packet {
+typedef struct Packet
+{
     int time;
     char Sadd[MAX_SADD_LENGTH];
     int Sport;
@@ -29,14 +33,16 @@ typedef struct Packet {
 } Packet;
 
 // Now Queue can use Packet*
-typedef struct {
+typedef struct
+{
     Packet *items[MAX_QUEUE_SIZE];
     int front;
     int rear;
     int size;
 } Queue;
 
-typedef struct Connection {
+typedef struct Connection
+{
     char Sadd[MAX_SADD_LENGTH];
     int Sport;
     char Dadd[MAX_SADD_LENGTH];
@@ -45,13 +51,15 @@ typedef struct Connection {
     double lastFinishTime;
     int printWeight;
     int firstAppearIdx;
+    double lastRealFinishTime;
+    double virtualFinishTime;
     Queue queue;
 } Connection;
 
 // Function declarations
 int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *connections);
 int calculateFinishTime(Packet *packet, Connection *connections);
-void printPacketToFile(Packet *packet);
+void printPacketToFile(Packet *packet, int actualStartTime);
 void savePacketParameters(char *line, Packet *packet);
 void drainReadyPackets(int currentTime, Connection *connections, int connectionCount);
 void compareOutputWithExpected(const char *expectedFilePath);
