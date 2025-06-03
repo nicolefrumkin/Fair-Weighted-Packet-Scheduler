@@ -48,10 +48,11 @@ typedef struct Connection
     double weight; 
     double virtualFinishTime;
     Queue queue;
+    double lastVirtualFinishTime;
 } Connection;
 
 // Function declarations
-int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *connections);
+int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *connections, int packetCount);
 void calculateFinishTime(Packet *packet, Connection *connections);
 void printPacketToFile(Packet *packet, int actualStartTime);
 void savePacketParameters(char *line, Packet *packet);

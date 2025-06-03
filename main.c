@@ -12,7 +12,7 @@ int main()
     {
         Packet *p = &packets[packetCount];
         savePacketParameters(line, p);
-        int connIndex = findOrCreateConnection(p, &connectionCount, connections);
+        int connIndex = findOrCreateConnection(p, &connectionCount, connections, packetCount);
         p->connectionID = connIndex;
         if (p->hasWeight)
         {
@@ -28,10 +28,10 @@ int main()
         enqueue(&connections[connIndex].queue, p);
         packetCount++;
     }
-    for (int i = 0; i < packetCount; i++)
-    {
-        calculateFinishTime(&packets[i], connections);
-    }
+    // for (int i = 0; i < packetCount; i++)
+    // {
+    //     calculateFinishTime(&packets[i], connections);
+    // }
     drainPackets(connections, connectionCount, packetCount);
 
     compareOutputWithExpected("out8_correct.txt");
@@ -95,26 +95,32 @@ void drainPackets(Connection *connections, int connectionCount, int remaining)
 {
     while (remaining > 0)
     {
+        // printf("-----------------------------------------------------\n");
         // find best available packet
         Packet *bestPacket = NULL;
         int bestConn = -1;
-        // printf("-------------------------------------------------------------------------\n");
         for (int i = 0; i < connectionCount; i++)
         {
             if (!isEmpty(&connections[i].queue))
             {
                 Packet *candidate;
                 peek(&connections[i].queue, &candidate);
-                // printf("Checking packet from connection %d: %s:%d -> %s:%d at time %d ",
-                //        i, candidate->Sadd, candidate->Sport, candidate->Dadd, candidate->Dport, candidate->time);
-                // printf("Virtual finish time: %.2f\n",
-                //        candidate->virtualFinishTime);
+
+                // Calculate VFT using current globalOutputFinishTime
+                double virtualStart = fmax(candidate->time, globalOutputFinishTime);
+                double virtualFinish = virtualStart + (double)candidate->packetLength / candidate->weight;
+
+                // Store temporarily so we can compare
+                candidate->virtualFinishTime = virtualFinish;
+
+                // printf("Connection %d: Packet time %d, length %d, weight %.2f | VTF: %.2f\n",
+                //        i, candidate->time, candidate->packetLength, candidate->weight, virtualFinish);
+
                 if (candidate->time <= globalOutputFinishTime)
                 {
                     if (!bestPacket ||
-                        candidate->time < bestPacket->time ||                  // prefer earliest-arriving eligible packet
-                        (candidate->time == bestPacket->time && i < bestConn)) // tie-breaker: earlier connection
-
+                        virtualFinish < bestPacket->virtualFinishTime ||
+                        (virtualFinish == bestPacket->virtualFinishTime && i < bestConn))
                     {
                         bestPacket = candidate;
                         bestConn = i;
@@ -122,8 +128,10 @@ void drainPackets(Connection *connections, int connectionCount, int remaining)
                 }
             }
         }
-        // printf("-------------------------------------------------------------------------\n");
-        //   if no packet was found, meaning all packets are in the future
+
+        // printf("-----------------------------------------------------\n");
+
+        // if no packet was found, meaning all packets are in the future
         if (!bestPacket)
         {
             // Find next earliest arrival time across all queues
@@ -146,6 +154,10 @@ void drainPackets(Connection *connections, int connectionCount, int remaining)
 
         double start = fmax(bestPacket->time, globalOutputFinishTime);
         globalOutputFinishTime = start + bestPacket->packetLength;
+
+        // Finalize VFT for bookkeeping
+        bestPacket->virtualFinishTime = start + (double)bestPacket->packetLength / bestPacket->weight;
+
         printPacketToFile(bestPacket, (int)start);
 
         Packet *removed;
@@ -154,7 +166,7 @@ void drainPackets(Connection *connections, int connectionCount, int remaining)
     }
 }
 
-int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *connections)
+int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *connections, int packetCount)
 {
 
     for (int i = 0; i < *connectionCount; i++)
@@ -171,7 +183,6 @@ int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *con
                 connections[i].weight = packet->weight;
             }
             // Set packet weight to connection weight
-            // packet->weight = connections[i].weight;
             return i;
         }
     }
@@ -194,7 +205,8 @@ void calculateFinishTime(Packet *packet, Connection *connections)
     int connID = packet->connectionID;
     Connection *conn = &connections[connID];
     double virtualStart = fmax(packet->time, globalOutputFinishTime);
-    packet->virtualFinishTime = virtualStart + (double)packet->packetLength / packet->weight;
+    packet->virtualFinishTime = virtualStart + (double)packet->packetLength / conn->weight;
+    connections[packet->connectionID].lastVirtualFinishTime = packet->virtualFinishTime;
 }
 
 void printPacketToFile(Packet *packet, int actualStartTime)
@@ -218,6 +230,7 @@ void printPacketToFile(Packet *packet, int actualStartTime)
 
 void savePacketParameters(char *line, Packet *packet)
 {
+    packet->weight = 1.0;
     int parsed = sscanf(line, " %d %s %d %s %d %d %lf",
                         &packet->time, packet->Sadd, &packet->Sport,
                         packet->Dadd, &packet->Dport, &packet->packetLength, &packet->weight);
