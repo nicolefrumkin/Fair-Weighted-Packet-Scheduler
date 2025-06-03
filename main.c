@@ -90,15 +90,35 @@ void compareOutputWithExpected(const char *expectedFilePath)
     fclose(actualFile);
     fclose(mismatchesFile);
 }
-
 void drainPackets(Connection *connections, int connectionCount, int remaining)
 {
+    double virtualTime = 0.0;
+    int lastRealTime = 0;
+
     while (remaining > 0)
     {
+        // --- Update virtual time ---
+        int elapsed = globalOutputFinishTime - lastRealTime;
+        double totalWeight = 0.0;
+        for (int i = 0; i < connectionCount; i++)
+        {
+            if (!isEmpty(&connections[i].queue))
+            {
+                totalWeight += connections[i].weight;
+            }
+        }
+        if (totalWeight > 0)
+        {
+            virtualTime += (double)elapsed / totalWeight;
+        }
+        lastRealTime = globalOutputFinishTime;
+
         // printf("-----------------------------------------------------\n");
-        // find best available packet
+
         Packet *bestPacket = NULL;
         int bestConn = -1;
+
+        // Find the best available packet (eligible and lowest virtual finish time)
         for (int i = 0; i < connectionCount; i++)
         {
             if (!isEmpty(&connections[i].queue))
@@ -106,14 +126,12 @@ void drainPackets(Connection *connections, int connectionCount, int remaining)
                 Packet *candidate;
                 peek(&connections[i].queue, &candidate);
 
-                // Calculate VFT using current globalOutputFinishTime
-                double virtualStart = fmax(candidate->time, globalOutputFinishTime);
-                double virtualFinish = virtualStart + (double)candidate->packetLength / candidate->weight;
-
-                // Store temporarily so we can compare
+                // Calculate virtual start and finish time using current virtual time
+                double virtualStart = fmax(connections[i].lastVirtualFinishTime, virtualTime);
+                double virtualFinish = virtualStart + ((double)candidate->packetLength / candidate->weight);
                 candidate->virtualFinishTime = virtualFinish;
 
-                // printf("Connection %d: Packet time %d, length %d, weight %.2f | VTF: %.2f\n",
+                // printf("Connection %d: Packet time %d, length %d, weight %.2f | VFT: %.2f\n",
                 //        i, candidate->time, candidate->packetLength, candidate->weight, virtualFinish);
 
                 if (candidate->time <= globalOutputFinishTime)
@@ -131,10 +149,9 @@ void drainPackets(Connection *connections, int connectionCount, int remaining)
 
         // printf("-----------------------------------------------------\n");
 
-        // if no packet was found, meaning all packets are in the future
         if (!bestPacket)
         {
-            // Find next earliest arrival time across all queues
+            // Advance to the next earliest arrival if no packet is eligible now
             int minArrival = INT_MAX;
             for (int i = 0; i < connectionCount; i++)
             {
@@ -152,11 +169,12 @@ void drainPackets(Connection *connections, int connectionCount, int remaining)
             continue;
         }
 
+        // Calculate real start time and update global finish time
         double start = fmax(bestPacket->time, globalOutputFinishTime);
         globalOutputFinishTime = start + bestPacket->packetLength;
 
-        // Finalize VFT for bookkeeping
-        bestPacket->virtualFinishTime = start + (double)bestPacket->packetLength / bestPacket->weight;
+        // Save last virtual finish time for this connection
+        connections[bestConn].lastVirtualFinishTime = bestPacket->virtualFinishTime;
 
         printPacketToFile(bestPacket, (int)start);
 
@@ -165,6 +183,7 @@ void drainPackets(Connection *connections, int connectionCount, int remaining)
         remaining--;
     }
 }
+
 
 int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *connections, int packetCount)
 {
