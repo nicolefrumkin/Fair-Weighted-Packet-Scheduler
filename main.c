@@ -1,11 +1,5 @@
 #include "header.h"
 
-int compareByArrivalTime(const void *a, const void *b)
-{
-    Packet *p1 = (Packet *)a;
-    Packet *p2 = (Packet *)b;
-    return p1->time - p2->time;
-}
 int main()
 {
     Packet *packets = malloc(sizeof(Packet) * MAX_PACKETS);
@@ -20,70 +14,25 @@ int main()
         savePacketParameters(line, p);
         int connIndex = findOrCreateConnection(p, &connectionCount, connections);
         p->connectionID = connIndex;
+        if (p->hasWeight)
+        {
+            // Packet has explicit weight — update connection's weight
+            connections[connIndex].weight = p->weight;
+        }
+        else
+        {
+            // Inherit weight from the connection
+            p->weight = connections[connIndex].weight;
+        }
+
         enqueue(&connections[connIndex].queue, p);
         packetCount++;
     }
-
-    qsort(packets, packetCount, sizeof(Packet), compareByArrivalTime);
-
     for (int i = 0; i < packetCount; i++)
     {
         calculateFinishTime(&packets[i], connections);
     }
-
-    int remaining = packetCount;
-    while (remaining > 0)
-    {
-        Packet *bestPacket = NULL;
-        int bestConn = -1;
-        for (int i = 0; i < connectionCount; i++)
-        {
-            if (!isEmpty(&connections[i].queue))
-            {
-                Packet *candidate;
-                peek(&connections[i].queue, &candidate);
-                if (candidate->time <= globalOutputFinishTime)
-                {
-                    if (!bestPacket ||
-                        candidate->virtualFinishTime < bestPacket->virtualFinishTime ||
-                        (candidate->virtualFinishTime == bestPacket->virtualFinishTime &&
-                         connections[i].firstAppearIdx < connections[bestConn].firstAppearIdx))
-                    {
-                        bestPacket = candidate;
-                        bestConn = i;
-                    }
-                }
-            }
-        }
-
-        if (!bestPacket)
-        {
-            // Find next earliest arrival time across all queues
-            int minArrival = INT_MAX;
-            for (int i = 0; i < connectionCount; i++)
-            {
-                if (!isEmpty(&connections[i].queue))
-                {
-                    Packet *candidate;
-                    peek(&connections[i].queue, &candidate);
-                    if (candidate->time < minArrival)
-                    {
-                        minArrival = candidate->time;
-                    }
-                }
-            }
-            globalOutputFinishTime = minArrival;
-            continue;
-        }
-
-        double start = fmax(bestPacket->time, globalOutputFinishTime);
-        globalOutputFinishTime = start + bestPacket->packetLength;
-        printPacketToFile(bestPacket, (int)start);
-
-        Packet *removed;
-        dequeue(&connections[bestConn].queue, &removed);
-        remaining--;
-    }
+    drainPackets(connections, connectionCount, packetCount);
 
     compareOutputWithExpected("out8_correct.txt");
     free(packets);
@@ -142,56 +91,66 @@ void compareOutputWithExpected(const char *expectedFilePath)
     fclose(mismatchesFile);
 }
 
-void drainReadyPackets(int currentTime, Connection *connections, int connectionCount)
+void drainPackets(Connection *connections, int connectionCount, int remaining)
 {
-    while (1)
+    while (remaining > 0)
     {
-        Packet *nextPacket = NULL;
-        int selectedConn = -1;
-        double minVirtualFinish = DBL_MAX;
-
-        // Find packet with minimum virtual finish time among ready packets
+        // find best available packet
+        Packet *bestPacket = NULL;
+        int bestConn = -1;
+        // printf("-------------------------------------------------------------------------\n");
         for (int i = 0; i < connectionCount; i++)
         {
             if (!isEmpty(&connections[i].queue))
             {
                 Packet *candidate;
                 peek(&connections[i].queue, &candidate);
-                // Check if packet has arrived
-                if (candidate->time <= currentTime)
+                // printf("Checking packet from connection %d: %s:%d -> %s:%d at time %d ",
+                //        i, candidate->Sadd, candidate->Sport, candidate->Dadd, candidate->Dport, candidate->time);
+                // printf("Virtual finish time: %.2f\n",
+                //        candidate->virtualFinishTime);
+                if (candidate->time <= globalOutputFinishTime)
                 {
-                    if (candidate->virtualFinishTime < minVirtualFinish)
+                    if (!bestPacket ||
+                        candidate->time < bestPacket->time ||                  // prefer earliest-arriving eligible packet
+                        (candidate->time == bestPacket->time && i < bestConn)) // tie-breaker: earlier connection
+
                     {
-                        nextPacket = candidate;
-                        selectedConn = i;
-                        minVirtualFinish = candidate->virtualFinishTime;
-                    }
-                    else if (candidate->virtualFinishTime == minVirtualFinish)
-                    {
-                        if (selectedConn == -1 || connections[i].firstAppearIdx < connections[selectedConn].firstAppearIdx)
-                        {
-                            nextPacket = candidate;
-                            selectedConn = i;
-                            // minVirtualFinish stays the same
-                        }
+                        bestPacket = candidate;
+                        bestConn = i;
                     }
                 }
             }
         }
+        // printf("-------------------------------------------------------------------------\n");
+        //   if no packet was found, meaning all packets are in the future
+        if (!bestPacket)
+        {
+            // Find next earliest arrival time across all queues
+            int minArrival = INT_MAX;
+            for (int i = 0; i < connectionCount; i++)
+            {
+                if (!isEmpty(&connections[i].queue))
+                {
+                    Packet *candidate;
+                    peek(&connections[i].queue, &candidate);
+                    if (candidate->time < minArrival)
+                    {
+                        minArrival = candidate->time;
+                    }
+                }
+            }
+            globalOutputFinishTime = minArrival;
+            continue;
+        }
 
-        if (!nextPacket)
-            break;
+        double start = fmax(bestPacket->time, globalOutputFinishTime);
+        globalOutputFinishTime = start + bestPacket->packetLength;
+        printPacketToFile(bestPacket, (int)start);
 
-        // Calculate actual start time
-        double actualStartTime = fmax((double)currentTime, globalOutputFinishTime);
-        double actualFinishTime = actualStartTime + (double)nextPacket->packetLength;
-        // Output with actual start time
-        printPacketToFile(nextPacket, (int)actualStartTime);
-        globalOutputFinishTime = actualFinishTime;
-
-        // Remove packet and update connection state
         Packet *removed;
-        dequeue(&connections[selectedConn].queue, &removed);
+        dequeue(&connections[bestConn].queue, &removed);
+        remaining--;
     }
 }
 
@@ -225,8 +184,6 @@ int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *con
     connections[idx].Sport = packet->Sport;
     connections[idx].Dport = packet->Dport;
     connections[idx].weight = packet->weight;
-    connections[idx].lastFinishTime = 0.0;
-    connections[idx].firstAppearIdx = idx; // This determines tie-breaking priority
     initQueue(&connections[idx].queue);
 
     return idx;
@@ -236,9 +193,8 @@ void calculateFinishTime(Packet *packet, Connection *connections)
 {
     int connID = packet->connectionID;
     Connection *conn = &connections[connID];
-    double virtualStart = fmax(packet->time, conn->lastFinishTime);
+    double virtualStart = fmax(packet->time, globalOutputFinishTime);
     packet->virtualFinishTime = virtualStart + (double)packet->packetLength / packet->weight;
-    conn->lastFinishTime = packet->virtualFinishTime;
 }
 
 void printPacketToFile(Packet *packet, int actualStartTime)

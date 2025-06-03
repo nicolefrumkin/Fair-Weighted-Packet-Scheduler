@@ -27,10 +27,8 @@ typedef struct Packet
     unsigned int packetLength;
     double weight;
     double virtualFinishTime;
-    double realFinishTime;
     unsigned int connectionID;
     int hasWeight;
-    unsigned int id;
 } Packet;
 
 typedef struct
@@ -48,9 +46,6 @@ typedef struct Connection
     char Dadd[MAX_SADD_LENGTH];
     unsigned int Dport;
     double weight; 
-    double lastFinishTime;
-    int printWeight;
-    int firstAppearIdx;
     double virtualFinishTime;
     Queue queue;
 } Connection;
@@ -60,7 +55,7 @@ int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *con
 void calculateFinishTime(Packet *packet, Connection *connections);
 void printPacketToFile(Packet *packet, int actualStartTime);
 void savePacketParameters(char *line, Packet *packet);
-void drainReadyPackets(int currentTime, Connection *connections, int connectionCount);
+void drainPackets(Connection *connections, int connectionCount, int remaining);
 void compareOutputWithExpected(const char *expectedFilePath);
 
 // Queue functions
