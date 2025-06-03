@@ -15,9 +15,8 @@
 #define MAX_CONNECTIONS 10000
 #define MAX_QUEUE_SIZE 1000
 
-static double globalOutputFinishTime = 0.0;
+double globalOutputFinishTime = 0.0;
 
-// Define Packet FIRST
 typedef struct Packet
 {
     int time;
@@ -28,11 +27,12 @@ typedef struct Packet
     int packetLength;
     double weight;
     double virtualFinishTime;
+    double realFinishTime;
     int connectionID;
+    int hasWeight;
     int id;
 } Packet;
 
-// Now Queue can use Packet*
 typedef struct
 {
     Packet *items[MAX_QUEUE_SIZE];
@@ -47,18 +47,17 @@ typedef struct Connection
     int Sport;
     char Dadd[MAX_SADD_LENGTH];
     int Dport;
-    double weight;
+    double weight; 
     double lastFinishTime;
     int printWeight;
     int firstAppearIdx;
-    double lastRealFinishTime;
     double virtualFinishTime;
     Queue queue;
 } Connection;
 
 // Function declarations
 int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *connections);
-int calculateFinishTime(Packet *packet, Connection *connections);
+void calculateFinishTime(Packet *packet, Connection *connections);
 void printPacketToFile(Packet *packet, int actualStartTime);
 void savePacketParameters(char *line, Packet *packet);
 void drainReadyPackets(int currentTime, Connection *connections, int connectionCount);

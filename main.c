@@ -22,7 +22,7 @@ int main()
     }
     // Drain ALL remaining packets at the end
     drainReadyPackets(INT_MAX, connections, connectionCount);
-    compareOutputWithExpected("out8.txt");
+    compareOutputWithExpected("out8_correct.txt");
     free(packets);
     free(connections);
     return 0;
@@ -31,7 +31,7 @@ int main()
 void compareOutputWithExpected(const char *expectedFilePath)
 {
     FILE *expectedFile = fopen(expectedFilePath, "r");
-    FILE *actualFile = fopen("actual_output.txt", "r");
+    FILE *actualFile = fopen("out8.txt", "r");
     FILE *mismatchesFile = fopen("mismatches.txt", "w");
 
     if (!expectedFile || !actualFile || !mismatchesFile)
@@ -94,17 +94,23 @@ void drainReadyPackets(int currentTime, Connection *connections, int connectionC
             {
                 Packet *candidate;
                 peek(&connections[i].queue, &candidate);
-
                 // Check if packet has arrived
                 if (candidate->time <= currentTime)
                 {
-                    if (candidate->virtualFinishTime < minVirtualFinish ||
-                        (candidate->virtualFinishTime == minVirtualFinish &&
-                         connections[i].firstAppearIdx < connections[selectedConn].firstAppearIdx))
+                    if (candidate->virtualFinishTime < minVirtualFinish)
                     {
                         nextPacket = candidate;
                         selectedConn = i;
                         minVirtualFinish = candidate->virtualFinishTime;
+                    }
+                    else if (candidate->virtualFinishTime == minVirtualFinish)
+                    {
+                        if (selectedConn == -1 || connections[i].firstAppearIdx < connections[selectedConn].firstAppearIdx)
+                        {
+                            nextPacket = candidate;
+                            selectedConn = i;
+                            // minVirtualFinish stays the same
+                        }
                     }
                 }
             }
@@ -115,7 +121,7 @@ void drainReadyPackets(int currentTime, Connection *connections, int connectionC
 
         // Calculate actual start time
         double actualStartTime = fmax((double)currentTime, globalOutputFinishTime);
-        double actualFinishTime = actualStartTime + (double)nextPacket->packetLength / connections[selectedConn].weight;
+        double actualFinishTime = actualStartTime + (double)nextPacket->packetLength;
         // Output with actual start time
         printPacketToFile(nextPacket, (int)actualStartTime);
         globalOutputFinishTime = actualFinishTime;
@@ -143,7 +149,7 @@ int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *con
                 connections[i].weight = packet->weight;
             }
             // Set packet weight to connection weight
-            //packet->weight = connections[i].weight;
+            // packet->weight = connections[i].weight;
             return i;
         }
     }
@@ -163,17 +169,13 @@ int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *con
     return idx;
 }
 
-int calculateFinishTime(Packet *packet, Connection *connections)
+void calculateFinishTime(Packet *packet, Connection *connections)
 {
     int connID = packet->connectionID;
     Connection *conn = &connections[connID];
-
-    double virtualStart = fmax((double)packet->time, conn->virtualFinishTime);
-
+    double virtualStart = fmax((double)packet->time, globalOutputFinishTime);
     // Virtual finish time = start + length/weight
     packet->virtualFinishTime = virtualStart + (double)packet->packetLength / packet->weight;
-
-    return 0;
 }
 
 void printPacketToFile(Packet *packet, int actualStartTime)
