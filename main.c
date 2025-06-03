@@ -1,5 +1,11 @@
 #include "header.h"
 
+int compareByArrivalTime(const void *a, const void *b)
+{
+    Packet *p1 = (Packet *)a;
+    Packet *p2 = (Packet *)b;
+    return p1->time - p2->time;
+}
 int main()
 {
     Packet *packets = malloc(sizeof(Packet) * MAX_PACKETS);
@@ -8,20 +14,77 @@ int main()
     int packetCount = 0;
     int connectionCount = 0;
 
-    // read packets from file
     while (fgets(line, sizeof(line), stdin))
     {
         Packet *p = &packets[packetCount];
         savePacketParameters(line, p);
         int connIndex = findOrCreateConnection(p, &connectionCount, connections);
         p->connectionID = connIndex;
-        calculateFinishTime(p, connections);
         enqueue(&connections[connIndex].queue, p);
-        drainReadyPackets(p->time, connections, connectionCount);
         packetCount++;
     }
-    // Drain ALL remaining packets at the end
-    drainReadyPackets(INT_MAX, connections, connectionCount);
+
+    qsort(packets, packetCount, sizeof(Packet), compareByArrivalTime);
+
+    for (int i = 0; i < packetCount; i++)
+    {
+        calculateFinishTime(&packets[i], connections);
+    }
+
+    int remaining = packetCount;
+    while (remaining > 0)
+    {
+        Packet *bestPacket = NULL;
+        int bestConn = -1;
+        for (int i = 0; i < connectionCount; i++)
+        {
+            if (!isEmpty(&connections[i].queue))
+            {
+                Packet *candidate;
+                peek(&connections[i].queue, &candidate);
+                if (candidate->time <= globalOutputFinishTime)
+                {
+                    if (!bestPacket ||
+                        candidate->virtualFinishTime < bestPacket->virtualFinishTime ||
+                        (candidate->virtualFinishTime == bestPacket->virtualFinishTime &&
+                         connections[i].firstAppearIdx < connections[bestConn].firstAppearIdx))
+                    {
+                        bestPacket = candidate;
+                        bestConn = i;
+                    }
+                }
+            }
+        }
+
+        if (!bestPacket)
+        {
+            // Find next earliest arrival time across all queues
+            int minArrival = INT_MAX;
+            for (int i = 0; i < connectionCount; i++)
+            {
+                if (!isEmpty(&connections[i].queue))
+                {
+                    Packet *candidate;
+                    peek(&connections[i].queue, &candidate);
+                    if (candidate->time < minArrival)
+                    {
+                        minArrival = candidate->time;
+                    }
+                }
+            }
+            globalOutputFinishTime = minArrival;
+            continue;
+        }
+
+        double start = fmax(bestPacket->time, globalOutputFinishTime);
+        globalOutputFinishTime = start + bestPacket->packetLength;
+        printPacketToFile(bestPacket, (int)start);
+
+        Packet *removed;
+        dequeue(&connections[bestConn].queue, &removed);
+        remaining--;
+    }
+
     compareOutputWithExpected("out8_correct.txt");
     free(packets);
     free(connections);
@@ -173,39 +236,43 @@ void calculateFinishTime(Packet *packet, Connection *connections)
 {
     int connID = packet->connectionID;
     Connection *conn = &connections[connID];
-    double virtualStart = fmax((double)packet->time, globalOutputFinishTime);
-    // Virtual finish time = start + length/weight
+    double virtualStart = fmax(packet->time, conn->lastFinishTime);
     packet->virtualFinishTime = virtualStart + (double)packet->packetLength / packet->weight;
+    conn->lastFinishTime = packet->virtualFinishTime;
 }
 
 void printPacketToFile(Packet *packet, int actualStartTime)
 {
-    if (packet->weight == 1.0)
-    {
-        printf("%d: %d %s %d %s %d %d\n",
-               actualStartTime,
-               packet->time, packet->Sadd, packet->Sport,
-               packet->Dadd, packet->Dport, packet->packetLength);
-    }
-    else
+    if (packet->hasWeight)
     {
         printf("%d: %d %s %d %s %d %d %.2f\n",
                actualStartTime,
                packet->time, packet->Sadd, packet->Sport,
                packet->Dadd, packet->Dport, packet->packetLength, packet->weight);
     }
+    else
+    {
+        printf("%d: %d %s %d %s %d %d\n",
+               actualStartTime,
+               packet->time, packet->Sadd, packet->Sport,
+               packet->Dadd, packet->Dport, packet->packetLength);
+    }
     fflush(stdout);
 }
 
 void savePacketParameters(char *line, Packet *packet)
 {
-    packet->weight = 1.0; // default
     int parsed = sscanf(line, " %d %s %d %s %d %d %lf",
                         &packet->time, packet->Sadd, &packet->Sport,
                         packet->Dadd, &packet->Dport, &packet->packetLength, &packet->weight);
     if (parsed < 7)
     {
-        packet->weight = 1.0; // fallback only if weight wasn't given
+        packet->weight = 1.0;  // fallback only if weight wasn't given
+        packet->hasWeight = 0; // no weight specified
+    }
+    else
+    {
+        packet->hasWeight = 1; // weight specified
     }
 }
 

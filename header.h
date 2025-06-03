@@ -19,18 +19,18 @@ double globalOutputFinishTime = 0.0;
 
 typedef struct Packet
 {
-    int time;
+    unsigned int time;
     char Sadd[MAX_SADD_LENGTH];
-    int Sport;
+    unsigned int Sport;
     char Dadd[MAX_SADD_LENGTH];
-    int Dport;
-    int packetLength;
+    unsigned int Dport;
+    unsigned int packetLength;
     double weight;
     double virtualFinishTime;
     double realFinishTime;
-    int connectionID;
+    unsigned int connectionID;
     int hasWeight;
-    int id;
+    unsigned int id;
 } Packet;
 
 typedef struct
@@ -44,9 +44,9 @@ typedef struct
 typedef struct Connection
 {
     char Sadd[MAX_SADD_LENGTH];
-    int Sport;
+    unsigned int Sport;
     char Dadd[MAX_SADD_LENGTH];
-    int Dport;
+    unsigned int Dport;
     double weight; 
     double lastFinishTime;
     int printWeight;
