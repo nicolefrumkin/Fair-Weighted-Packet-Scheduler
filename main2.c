@@ -1,5 +1,7 @@
 #include "header.h"
-int globalcount = 0; // debug
+int globalcount = 0;  // debug
+int currentTime2 = 0; // debug
+int prevConn = -1;
 bool dequeueByPointer(Queue *q, Packet *target)
 {
     int newRear = -1;
@@ -49,15 +51,20 @@ void addPacketsToQueue(int *nextToEnqueue, int packetCount, Packet *packets,
 {
     while (*nextToEnqueue < packetCount && packets[*nextToEnqueue].time <= currentTime)
     {
+        bool alreadyInQueue = false;
         for (int i = 0; i < transmittingNow->size; i++)
         {
-            if (transmittingNow->items[(transmittingNow->front + i) % MAX_QUEUE_SIZE]->connectionID ==
-                packets[*nextToEnqueue].connectionID)
+            int idx = (transmittingNow->front + i) % MAX_QUEUE_SIZE;
+            if (transmittingNow->items[idx]->connectionID == packets[*nextToEnqueue].connectionID)
             {
-                continue; // Skip if packet already in the queue for this connection
+                alreadyInQueue = true;
+                break;
             }
         }
-        enqueue(transmittingNow, &packets[*nextToEnqueue]);
+
+        if (!alreadyInQueue)
+            enqueue(transmittingNow, &packets[*nextToEnqueue]);
+
         (*nextToEnqueue)++;
     }
 }
@@ -87,7 +94,7 @@ Packet *findPacketFinishingFirst(Queue *transmittingNow, double totalWeight, dou
     return finishingPacket;
 }
 
-void updateBytesTransferred(Queue *transmittingNow, double totalWeight, double currentTime, double nextTime)
+void updateBytesTransferred(Queue *transmittingNow, double totalWeight, double currentTime, double nextTime, Connection *connections)
 {
     for (int i = 0; i < transmittingNow->size; i++)
     {
@@ -95,6 +102,7 @@ void updateBytesTransferred(Queue *transmittingNow, double totalWeight, double c
         Packet *p = transmittingNow->items[idx];
         double rate = p->weight / totalWeight;
         p->endTime = fmin(currentTime + (p->bytesLeft) * rate, nextTime);
+        connections[p->connectionID].virtualFinishTime = currentTime2 + p->packetLength;
         p->bytesLeft2 = p->bytesLeft;
         p->bytesLeft -= (nextTime - currentTime) * rate;
         // Handle floating point precision
@@ -105,7 +113,7 @@ void updateBytesTransferred(Queue *transmittingNow, double totalWeight, double c
     }
 }
 
-Packet **GPS(int packetCount, Packet *packets)
+Packet **GPS(int packetCount, Packet *packets, Connection *connections)
 {
     int nextToEnqueue = 0;
     Queue transmittingNow;
@@ -133,7 +141,6 @@ Packet **GPS(int packetCount, Packet *packets)
             {
                 currentTime = packets[nextToEnqueue].time;
             }
-            continue;
         }
 
         double totalWeight = calculateWeight(&transmittingNow);
@@ -159,21 +166,25 @@ Packet **GPS(int packetCount, Packet *packets)
         double timeElapsed = nextTime - currentTime;
         // Update bytes for all packets
 
-        updateBytesTransferred(&transmittingNow, totalWeight, currentTime, nextTime);
+        updateBytesTransferred(&transmittingNow, totalWeight, currentTime, nextTime, connections);
         // Debug: Print current queue
-        if (currentTime < 43000 && currentTime > 30000)
+        if (j > 33 && j < 38)
         {
-            fprintf(stderr, "\nTime %-4.0f:\n", currentTime, transmittingNow.size);
+            fprintf(stderr, "\nTime %-4.0f, j = %d, queue size = %d:\n", currentTime, j + 1, transmittingNow.size);
             for (int i = 0; i < transmittingNow.size; i++)
             {
                 int idx = (transmittingNow.front + i) % MAX_QUEUE_SIZE;
-                fprintf(stderr, "Queue[%d]: arrival=%-4d, length=%-3d, bytesLeft=%-4.2f, weight=%-3.2f, rate=%-3.2f,endTime=%-7.2f\n",
+                int ID = transmittingNow.items[idx]->connectionID;
+
+                fprintf(stderr, "Queue[%d]: arrival=%-4d, length=%-3d, bytesLeft=%-4.2f, weight=%-3.2f, rate=%-3.2f,endTime=%-7.2f, CFT=%.2f\n",
                         i, transmittingNow.items[idx]->time,
                         transmittingNow.items[idx]->packetLength,
                         transmittingNow.items[idx]->bytesLeft2,
                         transmittingNow.items[idx]->weight,
                         transmittingNow.items[idx]->weight / totalWeight,
-                        transmittingNow.items[idx]->endTime);
+                        transmittingNow.items[idx]->endTime,
+                        transmittingNow.items[idx]->printed,
+                        connections[ID].virtualFinishTime);
             }
         }
         currentTime = nextTime;
@@ -186,13 +197,36 @@ Packet **GPS(int packetCount, Packet *packets)
         {
             int idx = (transmittingNow.front + i) % MAX_QUEUE_SIZE;
             Packet *p = transmittingNow.items[idx];
-            if (p->endTime < minimalTime && !p->printed)
+            if (p->endTime < minimalTime)
             {
                 minimalTime = p->endTime;
                 minimalPacket = p;
             }
         }
-        sortedPackets[j++] = minimalPacket;
+        // After updateBytesTransferred and before printing
+        double t = fmax(currentTime2 + minimalPacket->packetLength, nextTime);
+        if ((!minimalPacket->printed || transmittingNow.size == 1))
+        {
+            // If the packet is not printed yet and its connection's virtual finish time is less than or equal to t
+            // and it is the only packet in the queue, print it
+            minimalPacket->endTime = t; // Set end time to t
+            minimalPacket->printed = 1; // Mark as printed
+            sortedPackets[j] = minimalPacket;
+            printPacketToFile(sortedPackets[j], currentTime2);
+            currentTime2 = fmax(currentTime2 + sortedPackets[j]->packetLength, nextTime);
+            j++;
+            prevConn = minimalPacket->connectionID;
+        }
+        
+        else if (minimalPacket->printed && connections[minimalPacket->connectionID].virtualFinishTime <= t)
+
+        {
+            minimalPacket->printed = 1;
+            sortedPackets[j] = minimalPacket;
+            printPacketToFile(sortedPackets[j], currentTime2);
+            currentTime2 = fmax(currentTime2 + sortedPackets[j]->packetLength, nextTime);
+            j++;
+        }
 
         // Check for finished packets AFTER updating all bytes
         for (int i = transmittingNow.size - 1; i >= 0; i--) // Iterate backwards to safely remove
@@ -202,8 +236,22 @@ Packet **GPS(int packetCount, Packet *packets)
             if (p->bytesLeft == 0)
             {
                 p->endTime = nextTime;
-                p->printed = 1;
                 dequeueByPointer(&transmittingNow, p);
+            }
+        }
+        // fprintf(stderr, "queue size = %d\n", transmittingNow.size);
+        // Drain remaining packets in the queue
+        while (!isEmpty(&transmittingNow))
+        {
+            Packet *p;
+            dequeue(&transmittingNow, &p);
+            if (!p->printed)
+            {
+                p->printed = 1;
+                sortedPackets[j] = p;
+                printPacketToFile(sortedPackets[j], currentTime2);
+                currentTime2 = fmax(currentTime2 + sortedPackets[j]->packetLength, nextTime);
+                j++;
             }
         }
     }
@@ -235,21 +283,21 @@ int main()
         enqueue(&connections[connIndex].queue, p);
         packetCount++;
     }
-    Packet **sortedPackets = GPS(packetCount, packets);
-    int currentTime2 = 0;
+    Packet **sortedPackets = GPS(packetCount, packets, connections);
     // fprintf(stderr, "-----------------------------------------------------------------------------\n");
     // fprintf(stderr, "\n\nsent     arrived     s_IP        s_port     d_IP        d_port len  weight end_time\n");
 
-    for (int i = 0; i < packetCount; i++)
-    {
-        printPacketToFile(sortedPackets[i], currentTime2);
-        currentTime2 = fmax(currentTime2 + sortedPackets[i]->packetLength,
-                            (i + 1 < packetCount ? sortedPackets[i + 1]->time : 0));
-    }
+    // for (int i = 0; i < packetCount; i++)
+    // {
+    //     printPacketToFile(sortedPackets[i], currentTime2);
+    //     currentTime2 = fmax(currentTime2 + sortedPackets[i]->packetLength,
+    //                         (i + 1 < packetCount ? sortedPackets[i + 1]->time : 0));
+    // }
+
     // drainPackets(connections, connectionCount, packetCount);
     // fprintf(stderr, "-----------------------------------------------------------------------------\n");
 
-    compareOutputWithExpected("out8_correct.txt");
+    compareOutputWithExpected("out9+_correct.txt");
     free(packets);
     free(connections);
     free(sortedPackets);
@@ -259,7 +307,7 @@ int main()
 void compareOutputWithExpected(const char *expectedFilePath)
 {
     FILE *expectedFile = fopen(expectedFilePath, "r");
-    FILE *actualFile = fopen("out8.txt", "r");
+    FILE *actualFile = fopen("out9+.txt", "r");
     FILE *mismatchesFile = fopen("mismatches.txt", "w");
 
     if (!expectedFile || !actualFile || !mismatchesFile)
