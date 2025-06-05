@@ -19,16 +19,20 @@ double globalOutputFinishTime = 0.0;
 
 typedef struct Packet
 {
-    unsigned int time;
+    int time;
     char Sadd[MAX_SADD_LENGTH];
     unsigned int Sport;
     char Dadd[MAX_SADD_LENGTH];
     unsigned int Dport;
     unsigned int packetLength;
+    double bytesLeft;
+    double bytesLeft2;
     double weight;
     double virtualFinishTime;
     unsigned int connectionID;
     int hasWeight;
+    double endTime;
+    int printed;
 } Packet;
 
 typedef struct
@@ -45,20 +49,22 @@ typedef struct Connection
     unsigned int Sport;
     char Dadd[MAX_SADD_LENGTH];
     unsigned int Dport;
-    double weight; 
+    double weight;
     double virtualFinishTime;
     Queue queue;
     double lastVirtualFinishTime;
+    bool backlogged;
 } Connection;
 
 // Function declarations
 int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *connections, int packetCount);
-void calculateFinishTime(Packet *packet, Connection *connections);
 void printPacketToFile(Packet *packet, int actualStartTime);
 void savePacketParameters(char *line, Packet *packet);
 void drainPackets(Connection *connections, int connectionCount, int remaining);
 void compareOutputWithExpected(const char *expectedFilePath);
 
+void removeFinishedPackets(Packet **activePackets, int *activeCount, double *totalWeight);
+void simulateUntil(double newTime, Packet **activePackets, int *activeCount, double *totalWeight);
 // Queue functions
 void initQueue(Queue *q);
 bool isEmpty(Queue *q);
