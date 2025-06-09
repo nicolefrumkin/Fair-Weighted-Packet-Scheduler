@@ -8,7 +8,7 @@ int main()
     char line[MAX_LINE_LENGTH] = {0};
     int packetCount = 0;
     int connectionCount = 0;
-    fprintf(stderr, "sent     arrived     s_IP        s_port     d_IP        d_port len  weight\n");
+    fprintf(stderr, "\nPreviously Scheduled Packets:\nsent     arrived     s_IP        s_port     d_IP        d_port len  weight\n");
     while (fgets(line, sizeof(line), stdin))
     {
         Packet *p = &packets[packetCount];
@@ -20,17 +20,45 @@ int main()
         packetCount++;
     }
     drainPackets(connections, connectionCount, packetCount);
+    const char *expected = NULL;
+    const char *actual = NULL;
+    if (packetCount > 0)
+    {
+        if (strcmp(packets[0].Sadd, "70.246.64.70") == 0 &&
+            strcmp(packets[0].Dadd, "4.71.70.4") == 0 &&
+            packets[0].Sport == 14770 &&
+            packets[0].Dport == 11970)
+        {
+            expected = "out8_correct.txt";
+            actual = "out8.txt";
+        }
+        else if (strcmp(packets[0].Sadd, "104.248.96.104") == 0 &&
+                 strcmp(packets[0].Dadd, "32.109.104.40") == 0 &&
+                 packets[0].Sport == 64440 &&
+                 packets[0].Dport == 39800)
+        {
+            expected = "out9+_correct.txt";
+            actual = "out9+.txt";
+        }
+    }
 
-    compareOutputWithExpected("out8_correct.txt");
+    if (expected && actual)
+    {
+        compareOutputWithExpected(expected, actual);
+    }
+    else
+    {
+        fprintf(stderr, "No comparison made (unknown input file).\n");
+    }
     free(packets);
     free(connections);
     return 0;
 }
 
-void compareOutputWithExpected(const char *expectedFilePath)
+void compareOutputWithExpected(const char *expectedFilePath, const char *actualFilePath)
 {
     FILE *expectedFile = fopen(expectedFilePath, "r");
-    FILE *actualFile = fopen("out8.txt", "r");
+    FILE *actualFile = fopen(actualFilePath, "r");
     FILE *mismatchesFile = fopen("mismatches.txt", "w");
 
     if (!expectedFile || !actualFile || !mismatchesFile)
@@ -44,7 +72,7 @@ void compareOutputWithExpected(const char *expectedFilePath)
     int lineNumber = 1;
     bool match = true;
     int count = 0;
-    fprintf(stderr, "-----------------------------------------------------------------------------\n\n");
+    // fprintf(stderr, "-----------------------------------------------------------------------------\n\n");
 
     while (fgets(expectedLine, sizeof(expectedLine), expectedFile) &&
            fgets(actualLine, sizeof(actualLine), actualFile))
@@ -106,22 +134,32 @@ void drainPackets(Connection *connections, int connectionCount, int remaining)
             {
                 Packet *candidate;
                 peek(&connections[i].queue, &candidate);
-                if (candidate->time <= globalOutputFinishTime)
+                double conVirtualTime = connections[candidate->connectionID].virtualFinishTime;
+                if (candidate->hasWeight)
+                {
+                    connections[i].weight = candidate->weight;
+                }
+                else
+                {
+                    candidate->weight = connections[i].weight; // Inherit weight from the connection
+                }
+                if (candidate->time <= globalOutputFinishTime && conVirtualTime <= globalOutputFinishTime)
                 {
                     totalWeight += connections[i].weight;
                 }
+                if (remaining == 1000 - 212 && candidate->time <= globalOutputFinishTime && conVirtualTime <= globalOutputFinishTime)
+                    fprintf(stderr, "ID: %d, connection finish time: %.2f\n", candidate->connectionID, conVirtualTime);
             }
         }
         if (totalWeight > 0)
         {
-            virtualTime += (double)elapsed;
+            virtualTime += (double)elapsed / totalWeight;
         }
         lastRealTime = globalOutputFinishTime;
-        if (remaining <= 1000 - 206 && remaining >= 1000 - 207)
+        if (remaining == 1000 - 212)
         {
-            fprintf(stderr, "total weight: %.2f\n", totalWeight);
-            fprintf(stderr, "*********************************************************************\n");
-            fprintf(stderr, "connection    arrival  length weight   VFT\n");
+            fprintf(stderr, "\n*********************************************************************\n\n");
+            fprintf(stderr, "Packets Currently Transmitting:\nconnection    arrival  length weight   VFT\n");
         }
         Packet *bestPacket = NULL;
         int bestConn = -1;
@@ -135,29 +173,26 @@ void drainPackets(Connection *connections, int connectionCount, int remaining)
                 peek(&connections[i].queue, &candidate);
 
                 // Calculate virtual start and finish time using current virtual time
-                // double virtualStart = fmax(connections[i].lastVirtualFinishTime, virtualTime);
-                double virtualStart = globalOutputFinishTime;
-
-                double ratio = candidate->weight / totalWeight;
-                candidate->virtualFinishTime = virtualStart + ((double)candidate->packetLength * ratio);
-
-                if (remaining == 1000 - 206 && count < 10 && candidate->time <= globalOutputFinishTime)
+                double virtualStart = fmax(connections[i].virtualFinishTime, virtualTime);
+                // double virtualStart = globalOutputFinishTime;
+                double conVirtualTime = connections[candidate->connectionID].virtualFinishTime;
+                double ratio = (double)candidate->weight / totalWeight;
+                candidate->virtualFinishTime = globalOutputFinishTime + ((double)candidate->packetLength / candidate->weight);
+                if (remaining == 1000 - 212 && count < 10 && candidate->time <= globalOutputFinishTime && conVirtualTime <= globalOutputFinishTime)
                 {
-                    fprintf(stderr, "\nconnections[i].lastVirtualFinishTime: %.2f\nvirtualTime: %.2f\n", connections[i].lastVirtualFinishTime, virtualTime);
-                    fprintf(stderr, "virtualStart: %.2f\n", virtualStart);
-                    fprintf(stderr, "virtualFinish: %.2f\n\n", candidate->virtualFinishTime);
+                    // fprintf(stderr,"candidate->time = %d, candidate->packetLength = %d, ratio = %.2f\n", candidate->time, candidate->packetLength, ratio);
                     fprintf(stderr, "    %2d       %7d    %4d   %3.2f   %7.2f\n",
                             i, candidate->time, candidate->packetLength, candidate->weight, candidate->virtualFinishTime);
                     count++;
                 }
 
-                if (candidate->time <= globalOutputFinishTime)
+                if (candidate->time <= globalOutputFinishTime && conVirtualTime <= globalOutputFinishTime)
                 {
                     if (!bestPacket ||
-                        candidate->virtualFinishTime < bestPacket->virtualFinishTime ||
-                        (fabs(candidate->virtualFinishTime - bestPacket->virtualFinishTime) < 1e-9 && i < bestConn))
-
-                    {
+                        candidate->virtualFinishTime < bestPacket->virtualFinishTime &&
+                            (fabs(conVirtualTime - globalOutputFinishTime) > 1e-9)){
+                        if (remaining == 1000 - 212)
+                            fprintf(stderr, "candidate time: %d, connection finish time: %.2f, global finish time: %.2f\n", candidate->time, conVirtualTime, globalOutputFinishTime);
                         minVirtualFinishTime = candidate->virtualFinishTime;
                         bestPacket = candidate;
                         bestConn = i;
@@ -166,9 +201,10 @@ void drainPackets(Connection *connections, int connectionCount, int remaining)
             }
         }
 
-        if (remaining <= 1000 - 206 && remaining >= 1000 - 207)
-            fprintf(stderr, "*********************************************************************\n");
-
+        if (remaining == 1000 - 212)
+        {
+            fprintf(stderr, "\n*********************************************************************\n\n");
+        }
         if (!bestPacket)
         {
             // Advance to the next earliest arrival if no packet is eligible now
@@ -188,13 +224,12 @@ void drainPackets(Connection *connections, int connectionCount, int remaining)
             globalOutputFinishTime = minArrival;
             continue;
         }
-
         // Calculate real start time and update global finish time
         double start = fmax(bestPacket->time, globalOutputFinishTime);
         globalOutputFinishTime = start + bestPacket->packetLength;
 
         // Save last virtual finish time for this connection
-        connections[bestConn].lastVirtualFinishTime = bestPacket->virtualFinishTime;
+        connections[bestConn].virtualFinishTime = globalOutputFinishTime;
 
         printPacketToFile(bestPacket, (int)start);
 
@@ -215,16 +250,6 @@ int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *con
             connections[i].Dport == packet->Dport)
         {
             // Found existing connection
-            // If this packet has a weight specification and connection doesn't have one yet
-            if (packet->hasWeight)
-            {
-                connections[i].weight = packet->weight;
-            }
-            else
-            {
-                packet->weight = connections[i].weight; // Inherit weight from the connection
-            }
-            // Set packet weight to connection weight
             return i;
         }
     }
@@ -250,7 +275,7 @@ void printPacketToFile(Packet *packet, int actualStartTime)
                actualStartTime,
                packet->time, packet->Sadd, packet->Sport,
                packet->Dadd, packet->Dport, packet->packetLength, packet->weight);
-        if (packet->time > 310000 && packet->time < 315830)
+        if (actualStartTime > 309558 && actualStartTime < 312421)
         {
             fprintf(stderr, "%-7d: %-7d %-15s %-6d %-15s %-6d %-3d %-3.2f\n",
                     actualStartTime,
@@ -265,12 +290,12 @@ void printPacketToFile(Packet *packet, int actualStartTime)
                actualStartTime,
                packet->time, packet->Sadd, packet->Sport,
                packet->Dadd, packet->Dport, packet->packetLength);
-        if (packet->time > 310000 && packet->time < 315830)
+        if (actualStartTime > 309558 && actualStartTime < 312421)
         {
-            fprintf(stderr, "%-7d: %-7d %-15s %-6d %-15s %-6d %-3d\n",
+            fprintf(stderr, "%-7d: %-7d %-15s %-6d %-15s %-6d %-7d %d\n",
                     actualStartTime,
                     packet->time, packet->Sadd, packet->Sport,
-                    packet->Dadd, packet->Dport, packet->packetLength);
+                    packet->Dadd, packet->Dport, packet->packetLength, 1);
             globalcount++;
         }
     }

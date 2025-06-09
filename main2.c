@@ -1,7 +1,9 @@
 #include "header.h"
 int globalcount = 0;  // debug
-int currentTime2 = 0; // debug
+double currentTime2 = 0; // debug
 int prevConn = -1;
+int prevPrinted = 1;
+
 bool dequeueByPointer(Queue *q, Packet *target)
 {
     int newRear = -1;
@@ -120,7 +122,7 @@ Packet **GPS(int packetCount, Packet *packets, Connection *connections)
     initQueue(&transmittingNow);
     Packet **sortedPackets = malloc(sizeof(Packet *) * packetCount);
     int j = 0;
-
+    double nextTime = 0.0;
     double currentTime = 0.0;
 
     // Initialize bytesLeft for all packets
@@ -132,11 +134,11 @@ Packet **GPS(int packetCount, Packet *packets, Connection *connections)
     while (j < packetCount)
     {
         // Add all packets that arrive at or before currentTime to queue
-        addPacketsToQueue(&nextToEnqueue, packetCount, packets, currentTime, &transmittingNow);
+        addPacketsToQueue(&nextToEnqueue, packetCount, packets, currentTime2, &transmittingNow);
 
         // If no packet is transmitting, jump to next packet arrival time
         if (isEmpty(&transmittingNow))
-        {
+        {   prevPrinted = 0;
             if (nextToEnqueue < packetCount)
             {
                 currentTime = packets[nextToEnqueue].time;
@@ -154,7 +156,7 @@ Packet **GPS(int packetCount, Packet *packets, Connection *connections)
 
         // Find when the next packet arrives
         double nextArrivalTime = DBL_MAX;
-        if (nextToEnqueue < packetCount)
+        if (nextToEnqueue < packetCount || prevPrinted == 1)
         {
             nextArrivalTime = packets[nextToEnqueue].time;
         }
@@ -162,7 +164,13 @@ Packet **GPS(int packetCount, Packet *packets, Connection *connections)
         // Determine next event time
         double packetFinishTime = finishingPacket->endTime;
         // double nextTime2 = (packetFinishTime < nextArrivalTime) ? packetFinishTime : nextArrivalTime;
-        double nextTime = nextArrivalTime;
+        if (prevPrinted) {
+            nextTime = nextArrivalTime;
+        }
+        else {
+            nextTime = packetFinishTime;
+        }
+        if (nextTime < 48000) fprintf(stderr, "j = %d, nextTime = %.2f\n", j+1,nextTime);
         double timeElapsed = nextTime - currentTime;
         // Update bytes for all packets
 
@@ -176,15 +184,14 @@ Packet **GPS(int packetCount, Packet *packets, Connection *connections)
                 int idx = (transmittingNow.front + i) % MAX_QUEUE_SIZE;
                 int ID = transmittingNow.items[idx]->connectionID;
 
-                fprintf(stderr, "Queue[%d]: arrival=%-4d, length=%-3d, bytesLeft=%-4.2f, weight=%-3.2f, rate=%-3.2f,endTime=%-7.2f, CFT=%.2f\n",
+                fprintf(stderr, "Queue[%d]: arrival=%-4d, length=%-3d, bytesLeft=%-4.2f, weight=%-3.2f, rate=%-3.2f,endTime=%-7.2f\n",
                         i, transmittingNow.items[idx]->time,
                         transmittingNow.items[idx]->packetLength,
                         transmittingNow.items[idx]->bytesLeft2,
                         transmittingNow.items[idx]->weight,
                         transmittingNow.items[idx]->weight / totalWeight,
                         transmittingNow.items[idx]->endTime,
-                        transmittingNow.items[idx]->printed,
-                        connections[ID].virtualFinishTime);
+                        transmittingNow.items[idx]->printed);
             }
         }
         currentTime = nextTime;
@@ -205,6 +212,9 @@ Packet **GPS(int packetCount, Packet *packets, Connection *connections)
         }
         // After updateBytesTransferred and before printing
         double t = fmax(currentTime2 + minimalPacket->packetLength, nextTime);
+        if (j > 33 && j < 38)
+            fprintf(stderr, "t = %.2f, packetLength = %.2f, nextTime = %.2f, prevPrinted = %d\n",
+                    t, currentTime2+minimalPacket->packetLength, nextTime, prevPrinted);
         if ((!minimalPacket->printed || transmittingNow.size == 1))
         {
             // If the packet is not printed yet and its connection's virtual finish time is less than or equal to t
@@ -213,19 +223,24 @@ Packet **GPS(int packetCount, Packet *packets, Connection *connections)
             minimalPacket->printed = 1; // Mark as printed
             sortedPackets[j] = minimalPacket;
             printPacketToFile(sortedPackets[j], currentTime2);
-            currentTime2 = fmax(currentTime2 + sortedPackets[j]->packetLength, nextTime);
+            currentTime2 = fmax(currentTime2 + minimalPacket->packetLength, nextTime);
             j++;
-            prevConn = minimalPacket->connectionID;
+            prevPrinted = 1;
         }
-        
-        else if (minimalPacket->printed && connections[minimalPacket->connectionID].virtualFinishTime <= t)
 
+        else if (!minimalPacket->printed && (connections[minimalPacket->connectionID].virtualFinishTime - t) <=1e-6)
         {
+            minimalPacket->endTime = t; // Set end time to t
             minimalPacket->printed = 1;
             sortedPackets[j] = minimalPacket;
+            connections[minimalPacket->connectionID].virtualFinishTime = currentTime2 + minimalPacket->packetLength;
             printPacketToFile(sortedPackets[j], currentTime2);
-            currentTime2 = fmax(currentTime2 + sortedPackets[j]->packetLength, nextTime);
+            prevPrinted = 1;
+            currentTime2 = fmax(currentTime2 + minimalPacket->packetLength, nextTime);
             j++;
+        }
+        else {
+            prevPrinted = 0; 
         }
 
         // Check for finished packets AFTER updating all bytes
@@ -252,6 +267,7 @@ Packet **GPS(int packetCount, Packet *packets, Connection *connections)
                 printPacketToFile(sortedPackets[j], currentTime2);
                 currentTime2 = fmax(currentTime2 + sortedPackets[j]->packetLength, nextTime);
                 j++;
+                prevPrinted = 1;
             }
         }
     }
@@ -259,7 +275,7 @@ Packet **GPS(int packetCount, Packet *packets, Connection *connections)
     return sortedPackets;
 }
 
-int main()
+int main(int argc, char *argv[])
 {
     Packet *packets = malloc(sizeof(Packet) * MAX_PACKETS);
     Connection *connections = malloc(sizeof(Connection) * MAX_CONNECTIONS);
@@ -296,18 +312,49 @@ int main()
 
     // drainPackets(connections, connectionCount, packetCount);
     // fprintf(stderr, "-----------------------------------------------------------------------------\n");
+    // Detect input file based on first packet timestamp
+    const char *expected = NULL;
+    const char *actual = NULL;
 
-    compareOutputWithExpected("out9+_correct.txt");
+    if (packetCount > 0)
+    {
+        if (strcmp(packets[0].Sadd, "70.246.64.70") == 0 &&
+            strcmp(packets[0].Dadd, "4.71.70.4") == 0 &&
+            packets[0].Sport == 14770 &&
+            packets[0].Dport == 11970)
+        {
+            expected = "out8_correct.txt";
+            actual = "out8.txt";
+        }
+        else if (strcmp(packets[0].Sadd, "104.248.96.104") == 0 &&
+                 strcmp(packets[0].Dadd, "32.109.104.40") == 0 &&
+                 packets[0].Sport == 64440 &&
+                 packets[0].Dport == 39800)
+        {
+            expected = "out9+_correct.txt";
+            actual = "out9+.txt";
+        }
+    }
+
+    if (expected && actual)
+    {
+        compareOutputWithExpected(expected, actual);
+    }
+    else
+    {
+        fprintf(stderr, "No comparison made (unknown input file).\n");
+    }
+
     free(packets);
     free(connections);
     free(sortedPackets);
     return 0;
 }
 
-void compareOutputWithExpected(const char *expectedFilePath)
+void compareOutputWithExpected(const char *expectedFilePath, const char *actualFilePath)
 {
     FILE *expectedFile = fopen(expectedFilePath, "r");
-    FILE *actualFile = fopen("out9+.txt", "r");
+    FILE *actualFile = fopen(actualFilePath, "r");
     FILE *mismatchesFile = fopen("mismatches.txt", "w");
 
     if (!expectedFile || !actualFile || !mismatchesFile)
@@ -321,7 +368,7 @@ void compareOutputWithExpected(const char *expectedFilePath)
     int lineNumber = 1;
     bool match = true;
     int count = 0;
-    fprintf(stderr, "\n-----------------------------------------------------------------------------\n\n");
+    fprintf(stderr, "\n----------------------------------------------------------------------------\n\n");
 
     while (fgets(expectedLine, sizeof(expectedLine), expectedFile) &&
            fgets(actualLine, sizeof(actualLine), actualFile))
@@ -329,14 +376,18 @@ void compareOutputWithExpected(const char *expectedFilePath)
         // Remove trailing newline characters
         expectedLine[strcspn(expectedLine, "\r\n")] = 0;
         actualLine[strcspn(actualLine, "\r\n")] = 0;
-
+        if (lineNumber > 31 && lineNumber < 37)
+        {
+            fprintf(stderr, "line %d: %s\n",
+                    lineNumber, actualLine);
+        }
         if (strcmp(expectedLine, actualLine) != 0)
         {
             fprintf(mismatchesFile, "Mismatch at line %d:\nExpected: %s\nActual  : %s\n\n",
                     lineNumber, expectedLine, actualLine);
             if (count < 5)
             {
-                fprintf(stderr, "Mismatch at line %d:\nExpected: %s\nActual  : %s\n\n",
+                fprintf(stderr, "\nMismatch at line %d:\nExpected: %s\nActual  : %s\n",
                         lineNumber, expectedLine, actualLine);
                 count++;
             }
@@ -359,7 +410,7 @@ void compareOutputWithExpected(const char *expectedFilePath)
         fprintf(mismatchesFile, "Output matches expected file.\n");
         fprintf(stderr, "Output matches expected file.\n");
     }
-    fprintf(stderr, "-----------------------------------------------------------------------------\n");
+    fprintf(stderr, "----------------------------------------------------------------------------\n");
 
     fclose(expectedFile);
     fclose(actualFile);
