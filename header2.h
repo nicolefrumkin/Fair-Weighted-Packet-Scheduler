@@ -21,15 +21,18 @@ typedef struct Packet
 {
     int time;
     char Sadd[MAX_SADD_LENGTH];
-    int Sport;
+    unsigned int Sport;
     char Dadd[MAX_SADD_LENGTH];
-    int Dport;
-    int packetLength;
+    unsigned int Dport;
+    unsigned int packetLength;
+    double bytesLeft;
+    double bytesLeft2;
     double weight;
     double virtualFinishTime;
-    int connectionID;
+    unsigned int connectionID;
     int hasWeight;
     double endTime;
+    int printed;
 } Packet;
 
 typedef struct
@@ -43,21 +46,24 @@ typedef struct
 typedef struct Connection
 {
     char Sadd[MAX_SADD_LENGTH];
-    int Sport;
+    unsigned int Sport;
     char Dadd[MAX_SADD_LENGTH];
-    int Dport;
+    unsigned int Dport;
     double weight;
     double virtualFinishTime;
     Queue queue;
     double lastVirtuualFinishTime;
+    bool backlogged;
 } Connection;
 
 // Function declarations
-int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *connections);
+int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *connections, int packetCount);
 void printPacketToFile(Packet *packet, int actualStartTime);
 void savePacketParameters(char *line, Packet *packet);
 void drainPackets(Connection *connections, int connectionCount, int remaining);
-
+void compareOutputWithExpected(const char *expectedFilePath, const char *actualFilePath);
+void removeFinishedPackets(Packet **activePackets, int *activeCount, double *totalWeight);
+void simulateUntil(double newTime, Packet **activePackets, int *activeCount, double *totalWeight);
 // Queue functions
 void initQueue(Queue *q);
 bool isEmpty(Queue *q);
