@@ -15,7 +15,7 @@
 #define MAX_CONNECTIONS 10000
 #define MAX_QUEUE_SIZE 1000
 
-double globalOutputFinishTime = 0.1;
+double globalFinishTime = 0.0;
 
 typedef struct Packet
 {
@@ -49,11 +49,10 @@ typedef struct Connection
     double weight;
     double virtualFinishTime;
     Queue queue;
-    double lastVirtuualFinishTime;
 } Connection;
 
 // Function declarations
-int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *connections);
+int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *connections, int packetCount);
 void printPacketToFile(Packet *packet, int actualStartTime);
 void savePacketParameters(char *line, Packet *packet);
 void drainPackets(Connection *connections, int connectionCount, int remaining);

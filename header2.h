@@ -15,21 +15,19 @@
 #define MAX_CONNECTIONS 10000
 #define MAX_QUEUE_SIZE 1000
 
-double globalOutputFinishTime = 0.1;
+double globalFinishTime = 0.0;
 
 typedef struct Packet
 {
     int time;
     char Sadd[MAX_SADD_LENGTH];
-    unsigned int Sport;
+    int Sport;
     char Dadd[MAX_SADD_LENGTH];
-    unsigned int Dport;
-    unsigned int packetLength;
-    double bytesLeft;
-    double bytesLeft2;
+    int Dport;
+    int packetLength;
     double weight;
     double virtualFinishTime;
-    unsigned int connectionID;
+    int connectionID;
     int hasWeight;
     double endTime;
     int printed;
@@ -46,9 +44,9 @@ typedef struct
 typedef struct Connection
 {
     char Sadd[MAX_SADD_LENGTH];
-    unsigned int Sport;
+    int Sport;
     char Dadd[MAX_SADD_LENGTH];
-    unsigned int Dport;
+    int Dport;
     double weight;
     double virtualFinishTime;
     Queue queue;
@@ -62,8 +60,7 @@ void printPacketToFile(Packet *packet, int actualStartTime);
 void savePacketParameters(char *line, Packet *packet);
 void drainPackets(Connection *connections, int connectionCount, int remaining);
 void compareOutputWithExpected(const char *expectedFilePath, const char *actualFilePath);
-void removeFinishedPackets(Packet **activePackets, int *activeCount, double *totalWeight);
-void simulateUntil(double newTime, Packet **activePackets, int *activeCount, double *totalWeight);
+
 // Queue functions
 void initQueue(Queue *q);
 bool isEmpty(Queue *q);

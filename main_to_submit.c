@@ -11,7 +11,7 @@ int main()
     {
         Packet *p = &packets[packetCount];
         savePacketParameters(line, p);
-        int connIndex = findOrCreateConnection(p, &connectionCount, connections);
+        int connIndex = findOrCreateConnection(p, &connectionCount, connections, packetCount);
         p->connectionID = connIndex;
         enqueue(&connections[connIndex].queue, p);
         packetCount++;
@@ -24,70 +24,54 @@ int main()
 
 void drainPackets(Connection *connections, int connectionCount, int remaining)
 {
-    double virtualTime = 0.0;
-    int lastRealTime = 0;
     double conVirtualTime = 0.0;
-    while (remaining > 0)
-    {
-        // --- Update virtual time ---
-        int elapsed = globalOutputFinishTime - lastRealTime;
-        double totalWeight = 0.0;
+    double packetSentTime = 0.0;
+    int packetNum = 0;
 
+    while (packetNum < remaining)
+    {
+        Packet *minPacket = NULL;
+        int minConnId = -1;
+
+        // sum weights of all active connections
+        double activeLinksWeight = 0.0;
         for (int i = 0; i < connectionCount; i++)
         {
-            if (!isEmpty(&connections[i].queue))
+            Packet *candidate;
+            conVirtualTime = connections[i].virtualFinishTime;
+
+            if (peek(&connections[i].queue, &candidate))
             {
-                Packet *candidate;
-                peek(&connections[i].queue, &candidate);
-                conVirtualTime = connections[candidate->connectionID].virtualFinishTime;
-                if (candidate->hasWeight)
+                if (conVirtualTime > globalFinishTime)
                 {
-                    connections[i].weight = candidate->weight;
-                }
-                else
-                {
-                    candidate->weight = connections[i].weight; // Inherit weight from the connection
-                }
-                if (candidate->time <= globalOutputFinishTime && conVirtualTime <= globalOutputFinishTime)
-                {
-                    totalWeight += connections[i].weight;
+                    activeLinksWeight += connections[i].weight;
                 }
             }
         }
-        if (totalWeight > 0)
-        {
-            virtualTime += (double)elapsed / totalWeight;
-        }
-        lastRealTime = globalOutputFinishTime;
-    
-        Packet *bestPacket = NULL;
-        int bestConn = -1;
 
         // Find the best available packet (eligible and lowest virtual finish time)
         for (int i = 0; i < connectionCount; i++)
         {
-            if (!isEmpty(&connections[i].queue))
+            Packet *candidate;
+            conVirtualTime = connections[i].virtualFinishTime;
+
+            if (peek(&connections[i].queue, &candidate))
             {
-                Packet *candidate;
-                peek(&connections[i].queue, &candidate);
-
-                // Calculate virtual start and finish time using current virtual time
-                candidate->virtualFinishTime = globalOutputFinishTime + ((double)candidate->packetLength / candidate->weight);
-                conVirtualTime = connections[candidate->connectionID].virtualFinishTime;
-
-                if ((candidate->time <= globalOutputFinishTime) && (conVirtualTime <= globalOutputFinishTime))
+                // take packet only if it arrived before the current time and its connection is available
+                if ((candidate->time <= globalFinishTime) && (conVirtualTime <= globalFinishTime))
                 {
-                    if (!bestPacket || (candidate->virtualFinishTime < bestPacket->virtualFinishTime) || (fabs(candidate->virtualFinishTime - bestPacket->virtualFinishTime)<1e-9 && i < bestConn))
+                    if (!minPacket || (candidate->virtualFinishTime < minPacket->virtualFinishTime) || (fabs(candidate->virtualFinishTime - minPacket->virtualFinishTime) < 1e-9 && i < minConnId))
                     {
-                        bestPacket = candidate;
-                        bestConn = i;
+                        minPacket = candidate;
+                        minConnId = i;
                     }
                 }
             }
         }
-        if (!bestPacket)
+
+        // Advance to the next earliest arrival if no packet is eligible now
+        if (!minPacket)
         {
-            // Advance to the next earliest arrival if no packet is eligible now
             int minArrival = INT_MAX;
             for (int i = 0; i < connectionCount; i++)
             {
@@ -101,25 +85,20 @@ void drainPackets(Connection *connections, int connectionCount, int remaining)
                     }
                 }
             }
-            globalOutputFinishTime = minArrival;
+            globalFinishTime = minArrival;
             continue;
         }
-        // Calculate real start time and update global finish time
-        double start = fmax(bestPacket->time, globalOutputFinishTime);
-        globalOutputFinishTime = start + bestPacket->packetLength;
-
-        // Save last virtual finish time for this connection
-        connections[bestConn].virtualFinishTime = globalOutputFinishTime;
-
-        printPacketToFile(bestPacket, (int)start);
-
+        packetSentTime = fmax(minPacket->time, globalFinishTime);
+        globalFinishTime = packetSentTime + minPacket->packetLength / (activeLinksWeight + minPacket->weight);
+        connections[minConnId].virtualFinishTime = globalFinishTime;
+        printPacketToFile(minPacket, (int)packetSentTime);
         Packet *removed;
-        dequeue(&connections[bestConn].queue, &removed);
-        remaining--;
+        dequeue(&connections[minConnId].queue, &removed);
+        packetNum++;
     }
 }
 
-int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *connections)
+int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *connections, int packetCount)
 {
 
     for (int i = 0; i < *connectionCount; i++)
@@ -130,6 +109,14 @@ int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *con
             connections[i].Dport == packet->Dport)
         {
             // Found existing connection
+            if (packet->hasWeight)
+            {
+                connections[i].weight = packet->weight;
+            }
+            else
+            {
+                packet->weight = connections[i].weight; // Inherit weight from the connection
+            }
             return i;
         }
     }
@@ -147,19 +134,19 @@ int findOrCreateConnection(Packet *packet, int *connectionCount, Connection *con
     return idx;
 }
 
-void printPacketToFile(Packet *packet, int actualStartTime)
+void printPacketToFile(Packet *packet, int packetSentTime)
 {
     if (packet->hasWeight)
     {
         printf("%d: %d %s %d %s %d %d %.2f\n",
-               actualStartTime,
+               packetSentTime,
                packet->time, packet->Sadd, packet->Sport,
                packet->Dadd, packet->Dport, packet->packetLength, packet->weight);
     }
     else
     {
         printf("%d: %d %s %d %s %d %d\n",
-               actualStartTime,
+               packetSentTime,
                packet->time, packet->Sadd, packet->Sport,
                packet->Dadd, packet->Dport, packet->packetLength);
     }
@@ -168,23 +155,22 @@ void printPacketToFile(Packet *packet, int actualStartTime)
 
 void savePacketParameters(char *line, Packet *packet)
 {
-    packet->weight = 1.0;
     int parsed = sscanf(line, " %d %s %d %s %d %d %lf",
                         &packet->time, packet->Sadd, &packet->Sport,
                         packet->Dadd, &packet->Dport, &packet->packetLength, &packet->weight);
     if (parsed < 7)
     {
-        packet->weight = 1.0;  // fallback only if weight wasn't given
-        packet->hasWeight = 0; // no weight specified
+        packet->weight = 1.0; // fallback only if weight wasn't given
+        packet->hasWeight = 0;
     }
     else
     {
         packet->hasWeight = 1; // weight specified
     }
-    packet->virtualFinishTime = 0.0;
+    packet->virtualFinishTime = packet->time + packet->packetLength;
 }
 
-// Queue functions remain unchanged
+// Queue functions
 void initQueue(Queue *q)
 {
     q->front = 0;
@@ -232,3 +218,4 @@ bool peek(Queue *q, Packet **packet)
     *packet = q->items[q->front];
     return true;
 }
+
