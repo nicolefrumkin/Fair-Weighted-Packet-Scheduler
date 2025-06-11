@@ -29,7 +29,6 @@ typedef struct Packet
     double virtualFinishTime;
     int connectionID;
     int hasWeight;
-    double endTime;
 } Packet;
 
 typedef struct
